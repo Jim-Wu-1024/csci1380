@@ -3,93 +3,98 @@
 /*
 Merge the current inverted index (assuming the right structure) with the global index file
 Usage: cat input | ./merge.js global-index > output
-
-The inverted indices have the different structures!
-
-Each line of a local index is formatted as:
-  - `<word/ngram> | <frequency> | <url>`
-
-Each line of a global index is be formatted as:
-  - `<word/ngram> | <url_1> <frequency_1> <url_2> <frequency_2> ... <url_n> <frequency_n>`
-  - Where pairs of `url` and `frequency` are in descending order of frequency
-  - Everything after `|` is space-separated
-
--------------------------------------------------------------------------------------
-Example:
-
-local index:
-  word1 word2 | 8 | url1
-  word3 | 1 | url9
-EXISTING global index:
-  word1 word2 | url4 2
-  word3 | url3 2
-
-merge into the NEW global index:
-  word1 word2 | url1 8 url4 2
-  word3 | url3 2 url9 1
-
-Remember to error gracefully, particularly when reading the global index file.
 */
 
 const fs = require('fs');
 const readline = require('readline');
-// The `compare` function can be used for sorting.
+
+// The `compare` function is used for sorting by frequency in descending order
 const compare = (a, b) => {
-  if (a.freq > b.freq) {
-    return -1;
-  } else if (a.freq < b.freq) {
-    return 1;
-  } else {
-    return 0;
-  }
+  if (a.freq > b.freq) return -1;
+  if (a.freq < b.freq) return 1;
+  return 0;
 };
+
+// Create a readline interface for reading from stdin
 const rl = readline.createInterface({
   input: process.stdin,
 });
 
-// 1. Read the incoming local index data from standard input (stdin) line by line.
+// Store local index data
 let localIndex = '';
+
+// 1. Read the incoming local index data from stdin line by line
 rl.on('line', (line) => {
+  localIndex += line + '\n';
 });
 
 rl.on('close', () => {
-  // 2. Read the global index name/location, using process.argv
-  // and call printMerged as a callback
-});
-
-const printMerged = (err, data) => {
-  if (err) {
-    console.error('Error reading file:', err);
-    return;
+  // 2. Read the global index file path from `process.argv`
+  const globalIndexFile = process.argv[2];
+  if (!globalIndexFile) {
+    console.error('Error: Global index file path is required as an argument.');
+    process.exit(1);
   }
 
-  // Split the data into an array of lines
-  const localIndexLines = localIndex.split('\n');
-  const globalIndexLines = data.split('\n');
+  // Read the global index file and process the merge
+  fs.readFile(globalIndexFile, 'utf8', (err, data) => {
+    if (err) {
+      console.error('Error reading global index file:', err);
+      process.exit(1);
+    }
+    printMerged(data);
+  });
+});
 
-  localIndexLines.pop();
-  globalIndexLines.pop();
+// Function to merge and print the new global index
+const printMerged = (globalData) => {
+  // Split the data into an array of lines
+  const localIndexLines = localIndex.trim().split('\n');
+  const globalIndexLines = globalData.trim().split('\n');
 
   const local = {};
   const global = {};
 
-  // 3. For each line in `localIndexLines`, parse them and add them to the `local` object where keys are terms and values contain `url` and `freq`.
+  // 3. Parse the local index lines into the `local` object
   for (const line of localIndexLines) {
-    local[term] = {url, freq};
+    const [term, freq, url] = line.split(' | ').map((part) => part.trim());
+    if (term && freq && url) {
+      local[term] = {url, freq: parseInt(freq, 10)};
+    }
   }
 
-  // 4. For each line in `globalIndexLines`, parse them and add them to the `global` object where keys are terms and values are arrays of `url` and `freq` objects.
-  // Use the .trim() method to remove leading and trailing whitespace from a string.
+  // 4. Parse the global index lines into the `global` object
   for (const line of globalIndexLines) {
-    global[term] = urlfs; // Array of {url, freq} objects
+    const [term, entries] = line.split(' | ').map((part) => part.trim());
+    if (term && entries) {
+      const urlFreqPairs = entries.split(' ').map((entry, index, array) => {
+        if (index % 2 === 0) {
+          // Combine `url` and `freq` as an object
+          return {url: entry, freq: parseInt(array[index + 1], 10)};
+        }
+        return null;
+      }).filter((pair) => pair); // Remove null entries
+      global[term] = urlFreqPairs;
+    }
   }
 
-  // 5. Merge the local index into the global index:
-  // - For each term in the local index, if the term exists in the global index:
-  //     - Append the local index entry to the array of entries in the global index.
-  //     - Sort the array by `freq` in descending order.
-  // - If the term does not exist in the global index:
-  //     - Add it as a new entry with the local index's data.
-  // 6. Print the merged index to the console in the same format as the global index file:
-  //    - Each line contains a term, followed by a pipe (`|`), followed by space-separated pairs of `url` and `freq`.
+  // 5. Merge the local index into the global index
+  for (const term in local) {
+    if (global[term]) {
+      // Term exists in global index: append and sort by frequency
+      global[term].push(local[term]);
+      global[term].sort(compare);
+    } else {
+      // Term doesn't exist: add it as a new entry
+      global[term] = [local[term]];
+    }
+  }
+
+  // 6. Print the merged index to stdout
+  for (const term in global) {
+    const entries = global[term]
+        .map((entry) => `${entry.url} ${entry.freq}`)
+        .join(' ');
+    console.log(`${term} | ${entries}`);
+  }
 };
